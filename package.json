@@ -8,10 +8,21 @@
   },
   "categories": ["Other"],
   "activationEvents": [
-    "workspaceContains:**/tasks.sh"
+    "workspaceContains:**/tasks.sh",
+    "workspaceContains:**/.tasks.sh"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Bash Task Master",
+      "properties": {
+        "btm.taskMasterHome": {
+          "type": "string",
+          "default": "",
+          "description": "Directory containing task-runner.sh (TASK_MASTER_HOME). Leave empty to use the user's home directory. Use for testing (e.g. a dev build path)."
+        }
+      }
+    },
     "taskDefinitions": [
       {
         "type": "btm",
@@ -23,7 +34,71 @@
           }
         }
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "btm.tasks",
+          "name": "Bash Task Master"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "btm.runTask", "title": "BTM: Run Task" },
+      { "command": "btm.refresh", "title": "BTM: Refresh" },
+      { "command": "btm.runTaskFromTree", "title": "Run" },
+      { "command": "btm.runTaskFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runSubcommandFromTree", "title": "Run" },
+      { "command": "btm.runSubcommandFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runGlobalTaskFromTree", "title": "Run" },
+      { "command": "btm.runGlobalTaskFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runGlobalSubcommandFromTree", "title": "Run" },
+      { "command": "btm.runGlobalSubcommandFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runTaskFromTreeClick", "title": "Run" },
+      { "command": "btm.runTaskFromTreeWithArgsClick", "title": "Run with arguments" },
+      { "command": "btm.runSubcommandFromTreeClick", "title": "Run" },
+      { "command": "btm.runSubcommandFromTreeWithArgsClick", "title": "Run with arguments" },
+      { "command": "btm.runGlobalTaskFromTreeClick", "title": "Run" },
+      { "command": "btm.runGlobalTaskFromTreeWithArgsClick", "title": "Run with arguments" },
+      { "command": "btm.runGlobalSubcommandFromTreeClick", "title": "Run" },
+      { "command": "btm.runGlobalSubcommandFromTreeWithArgsClick", "title": "Run with arguments" }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "btm.runTaskFromTree",
+          "when": "view == btm.tasks && viewItem == btm-task"
+        },
+        {
+          "command": "btm.runTaskFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-task"
+        },
+        {
+          "command": "btm.runSubcommandFromTree",
+          "when": "view == btm.tasks && viewItem == btm-subcommand"
+        },
+        {
+          "command": "btm.runSubcommandFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-subcommand"
+        },
+        {
+          "command": "btm.runGlobalTaskFromTree",
+          "when": "view == btm.tasks && viewItem == btm-global-task"
+        },
+        {
+          "command": "btm.runGlobalTaskFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-global-task"
+        },
+        {
+          "command": "btm.runGlobalSubcommandFromTree",
+          "when": "view == btm.tasks && viewItem == btm-global-subcommand"
+        },
+        {
+          "command": "btm.runGlobalSubcommandFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-global-subcommand"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
