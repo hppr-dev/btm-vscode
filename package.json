@@ -1,0 +1,39 @@
+{
+  "name": "btm-vscode",
+  "displayName": "Bash Task Master",
+  "description": "Run Bash Task Master (BTM) tasks from the editor",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "workspaceContains:**/tasks.sh"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "taskDefinitions": [
+      {
+        "type": "btm",
+        "required": ["task"],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "BTM task name"
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
