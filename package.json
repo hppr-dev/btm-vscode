@@ -20,6 +20,11 @@
           "type": "string",
           "default": "",
           "description": "Directory containing task-runner.sh (TASK_MASTER_HOME). Leave empty to use the user's home directory. Use for testing (e.g. a dev build path)."
+        },
+        "btm.useDedicatedTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run BTM tasks in a dedicated terminal so environment variables (e.g. from venv/gonv activate) persist. If disabled, environment variables will not be shared between individual task calls (e.g. venv/gonv activate will not persist)."
         }
       }
     },
@@ -61,7 +66,15 @@
       { "command": "btm.runGlobalTaskFromTreeClick", "title": "Run" },
       { "command": "btm.runGlobalTaskFromTreeWithArgsClick", "title": "Run with arguments" },
       { "command": "btm.runGlobalSubcommandFromTreeClick", "title": "Run" },
-      { "command": "btm.runGlobalSubcommandFromTreeWithArgsClick", "title": "Run with arguments" }
+      { "command": "btm.runGlobalSubcommandFromTreeWithArgsClick", "title": "Run with arguments" },
+      { "command": "btm.runModuleTaskFromTree", "title": "Run" },
+      { "command": "btm.runModuleTaskFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runModuleSubcommandFromTree", "title": "Run" },
+      { "command": "btm.runModuleSubcommandFromTreeWithArgs", "title": "Run with arguments" },
+      { "command": "btm.runModuleTaskFromTreeClick", "title": "Run" },
+      { "command": "btm.runModuleTaskFromTreeWithArgsClick", "title": "Run with arguments" },
+      { "command": "btm.runModuleSubcommandFromTreeClick", "title": "Run" },
+      { "command": "btm.runModuleSubcommandFromTreeWithArgsClick", "title": "Run with arguments" }
     ],
     "menus": {
       "view/item/context": [
@@ -96,6 +109,22 @@
         {
           "command": "btm.runGlobalSubcommandFromTreeWithArgs",
           "when": "view == btm.tasks && viewItem == btm-global-subcommand"
+        },
+        {
+          "command": "btm.runModuleTaskFromTree",
+          "when": "view == btm.tasks && viewItem == btm-module-task"
+        },
+        {
+          "command": "btm.runModuleTaskFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-module-task"
+        },
+        {
+          "command": "btm.runModuleSubcommandFromTree",
+          "when": "view == btm.tasks && viewItem == btm-module-subcommand"
+        },
+        {
+          "command": "btm.runModuleSubcommandFromTreeWithArgs",
+          "when": "view == btm.tasks && viewItem == btm-module-subcommand"
         }
       ]
     }

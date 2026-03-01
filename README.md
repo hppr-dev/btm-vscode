@@ -11,13 +11,17 @@ Run [Bash Task Master](https://github.com/hppr-dev/bash-task-master) (BTM) tasks
 
 - **Listing tasks** – The extension uses `task +s list -a --json` (silent + JSON) to get task names, falling back to plain `task list` output if JSON is not available. Tasks are discovered by invoking `bash` and sourcing `$TASK_MASTER_HOME/task-runner.sh`. If no workspace folder contains a tasks file, or BTM is not installed, no tasks are shown.
 - **Task metadata** – The extension uses `task +s help <name> --json` for machine-readable task metadata (description, required/optional arguments, subcommands). When you run a task, you can choose a subcommand (if any) and be prompted for required and optional arguments.
-- **Running tasks** – When you run a task, the extension executes it in the integrated terminal (without silent mode so you see normal output). The working directory is set to the folder that contains the tasks file (or the workspace folder root if none is found).
+- **Running tasks** – By default, the extension runs BTM tasks in a **dedicated terminal** named **BTM**. The same terminal is reused so that environment variables set by tasks (e.g. `venv activate`, `gonv activate`) persist. You are encouraged to work inside this terminal when you need a shell, so you have access to those state variables. The working directory is set to the folder that contains the tasks file (or the workspace folder root when the task is outside the current project).
 
 ## Usage
 
 - **Bash Task Master view** – In the Explorer sidebar, open the **Bash Task Master** view to see workspace folders and their BTM tasks. Expand a task to see its description, required/optional arguments, and subcommands. Right‑click a task and choose **Run Task** to run it; you can then pick a subcommand (if any) and enter required/optional arguments.
 - **BTM: Run Task** – Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run **BTM: Run Task**, pick a task, then optionally a subcommand and any required or optional arguments.
 - **Terminal → Run Task** – BTM tasks also appear in the generic **Run Task** list; select one to run it.
+
+## Settings
+
+- **`btm.useDedicatedTerminal`** (default: `true`) – When enabled, all BTM task runs use a single dedicated terminal (**BTM**) so that environment variables (e.g. from `venv activate` or `gonv activate`) are preserved between runs. If you disable this setting, tasks run via the editor’s task runner instead; **environment variables will not be shared between individual task calls** (e.g. venv/gonv activate will not persist in the terminal).
 
 ## Features
 

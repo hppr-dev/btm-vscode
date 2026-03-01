@@ -51,6 +51,21 @@ function listBtmTasksGlobal(cwd: string): string[] {
   }
 }
 
+function listBtmModules(cwd: string): string[] {
+  try {
+    const out = runBtmInCwd(cwd, 'list --modules --json');
+    const trimmed = out.trim();
+    if (trimmed.startsWith('[')) {
+      const arr = JSON.parse(trimmed) as string[];
+      return Array.isArray(arr) ? arr.filter((name) => typeof name === 'string' && name.length > 0) : [];
+    }
+    const lines = trimmed.split(/\n/).map((s) => s.trim()).filter((s) => s.length > 0);
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
 export type BtmArg = { long: string; short: string; type: string };
 export type BtmSubcommand = { name: string; description: string; required: BtmArg[]; optional: BtmArg[] };
 export type BtmTaskHelp = {
@@ -154,10 +169,11 @@ let _lastClickTime = 0;
 
 function getRunNodeKey(node: BtmTaskNode | BtmSubcommandNode): string {
   const g = node.isGlobal ? '1' : '0';
+  const m = node.isModule ? '1' : '0';
   const cwd = node.btmCwd;
   const folder = node.folder.uri.fsPath;
-  if (node.kind === 'task') return `task:${g}:${cwd}:${folder}:${node.taskName}`;
-  return `sub:${g}:${cwd}:${folder}:${node.taskName}:${node.subcommandName}`;
+  if (node.kind === 'task') return `task:${g}:${m}:${cwd}:${folder}:${node.taskName}`;
+  return `sub:${g}:${m}:${cwd}:${folder}:${node.taskName}:${node.subcommandName}`;
 }
 
 function shouldRunOnClick(node: BtmTaskNode | BtmSubcommandNode): boolean {
@@ -188,6 +204,74 @@ function getBtmTaskHelp(cwd: string, taskName: string): BtmTaskHelp | null {
 }
 
 const TASKS_FILE_GLOBS = ['**/.tasks.sh', '**/tasks.sh'];
+const BTM_TERMINAL_NAME = 'BTM';
+
+let _btmTerminalSourced = false;
+
+function useDedicatedTerminal(): boolean {
+  return vscode.workspace.getConfiguration('btm').get<boolean>('useDedicatedTerminal') ?? true;
+}
+
+function isTaskMasterHomeCustom(): boolean {
+  const setting = vscode.workspace.getConfiguration('btm').get<string>('taskMasterHome');
+  return setting !== undefined && setting !== null && setting.trim() !== '';
+}
+
+function getWorkspaceHome(): string {
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders && folders.length > 0) {
+    return folders[0].uri.fsPath;
+  }
+  return os.homedir();
+}
+
+function isCwdOutsideProject(cwd: string, workspaceHome: string): boolean {
+  const resolvedCwd = path.resolve(cwd);
+  const resolvedHome = path.resolve(workspaceHome);
+  return resolvedCwd !== resolvedHome && !resolvedCwd.startsWith(resolvedHome + path.sep);
+}
+
+function buildBtmTerminalCommand(
+  taskName: string,
+  opts?: { subcommand?: string; args?: string[] }
+): string {
+  let cmd = `task ${JSON.stringify(taskName)}`;
+  if (opts?.subcommand) cmd += ` ${JSON.stringify(opts.subcommand)}`;
+  if (opts?.args && opts.args.length > 0) cmd += ' ' + opts.args.map((a) => JSON.stringify(a)).join(' ');
+  return cmd;
+}
+
+function getOrCreateBtmTerminal(workspaceHome: string): vscode.Terminal {
+  const btmHome = getBtmHome();
+  const existing = vscode.window.terminals.find((t) => t.name === BTM_TERMINAL_NAME);
+  if (existing) return existing;
+  const terminal = vscode.window.createTerminal({
+    name: BTM_TERMINAL_NAME,
+    cwd: workspaceHome,
+    env: { ...process.env, TASK_MASTER_HOME: btmHome },
+  });
+  terminal.show();
+  return terminal;
+}
+
+function runInDedicatedTerminal(
+  taskName: string,
+  cwd: string,
+  workspaceHome: string,
+  opts?: { subcommand?: string; args?: string[] }
+): void {
+  const terminal = getOrCreateBtmTerminal(workspaceHome);
+  if (isTaskMasterHomeCustom() && !_btmTerminalSourced) {
+    const btmHome = getBtmHome();
+    const runnerPath = path.join(btmHome, 'task-runner.sh');
+    terminal.sendText(`source ${JSON.stringify(runnerPath)}`);
+    _btmTerminalSourced = true;
+  }
+  const cmd = buildBtmTerminalCommand(taskName, opts);
+  const needCd = isCwdOutsideProject(cwd, workspaceHome);
+  const fullCmd = needCd ? `cd ${JSON.stringify(workspaceHome)} && ${cmd}` : cmd;
+  terminal.sendText(fullCmd);
+}
 
 function createBtmShellExecution(
   taskName: string,
@@ -234,10 +318,17 @@ type BtmTaskNode = {
   btmCwd: string;
   folder: vscode.WorkspaceFolder;
   isGlobal?: boolean;
+  isModule?: boolean;
 };
 
 type BtmGlobalRootNode = {
   kind: 'globalRoot';
+  btmCwd: string;
+  folder: vscode.WorkspaceFolder;
+};
+
+type BtmModulesRootNode = {
+  kind: 'modulesRoot';
   btmCwd: string;
   folder: vscode.WorkspaceFolder;
 };
@@ -257,9 +348,10 @@ type BtmSubcommandNode = {
   btmCwd: string;
   folder: vscode.WorkspaceFolder;
   isGlobal?: boolean;
+  isModule?: boolean;
 };
 
-type BtmTreeNode = BtmFolderNode | BtmTaskNode | BtmTaskInfoSectionNode | BtmSubcommandNode | BtmGlobalRootNode;
+type BtmTreeNode = BtmFolderNode | BtmTaskNode | BtmTaskInfoSectionNode | BtmSubcommandNode | BtmGlobalRootNode | BtmModulesRootNode;
 
 class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
@@ -281,8 +373,17 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
       ).then(async (nodes) => {
         const folderNodes = nodes.filter((n) => listBtmTasks(n.btmCwd).length > 0);
         const workspaceCwd = nodes[0]?.btmCwd ?? folders![0].uri.fsPath;
+        const moduleNames = listBtmModules(workspaceCwd);
         const globalNames = listBtmTasksGlobal(workspaceCwd);
-        const result: BtmTreeNode[] = [...folderNodes];
+        const result: BtmTreeNode[] = [];
+        if (moduleNames.length > 0) {
+          result.push({
+            kind: 'modulesRoot',
+            btmCwd: workspaceCwd,
+            folder: folders![0],
+          });
+        }
+        result.push(...folderNodes);
         if (globalNames.length > 0) {
           result.push({
             kind: 'globalRoot',
@@ -292,6 +393,16 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
         }
         return result;
       });
+    }
+    if (element.kind === 'modulesRoot') {
+      const names = listBtmModules(element.btmCwd);
+      return names.map((taskName) => ({
+        kind: 'task' as const,
+        taskName,
+        btmCwd: element.btmCwd,
+        folder: element.folder,
+        isModule: true,
+      }));
     }
     if (element.kind === 'globalRoot') {
       const names = listBtmTasksGlobal(element.btmCwd);
@@ -324,9 +435,10 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
           btmCwd: element.btmCwd,
           folder: element.folder,
           isGlobal: element.isGlobal,
+          isModule: element.isModule,
         }));
       }
-      if (element.isGlobal) return [];
+      if (element.isGlobal || element.isModule) return [];
       const sections: BtmTaskInfoSectionNode[] = [];
       const formatArg = (a: BtmArg): string =>
         a.type === 'bool' ? `${a.long}${a.short ? `, ${a.short}` : ''}` : `${a.long}${a.short ? `, ${a.short}` : ''} (${a.type})`;
@@ -373,6 +485,15 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
       item.iconPath = new vscode.ThemeIcon('folder');
       return item;
     }
+    if (element.kind === 'modulesRoot') {
+      const item = new vscode.TreeItem(
+        'Modules',
+        vscode.TreeItemCollapsibleState.Collapsed
+      );
+      item.contextValue = 'btm-modules-root';
+      item.iconPath = new vscode.ThemeIcon('folder');
+      return item;
+    }
     if (element.kind === 'task') {
       const help = getBtmTaskHelp(element.btmCwd, element.taskName);
       const hasSubcommands = (help?.subcommands.length ?? 0) > 0;
@@ -380,11 +501,13 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
         element.taskName,
         hasSubcommands ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
       );
-      item.contextValue = element.isGlobal ? 'btm-global-task' : 'btm-task';
+      item.contextValue = element.isGlobal ? 'btm-global-task' : element.isModule ? 'btm-module-task' : 'btm-task';
       item.iconPath = new vscode.ThemeIcon('symbol-method');
       item.command = element.isGlobal
         ? { command: 'btm.runGlobalTaskFromTreeClick', arguments: [element], title: 'Run' }
-        : { command: 'btm.runTaskFromTreeClick', arguments: [element], title: 'Run' };
+        : element.isModule
+          ? { command: 'btm.runModuleTaskFromTreeClick', arguments: [element], title: 'Run' }
+          : { command: 'btm.runTaskFromTreeClick', arguments: [element], title: 'Run' };
       item.tooltip = buildTaskTooltip(help);
       return item;
     }
@@ -393,11 +516,13 @@ class BtmTasksTreeProvider implements vscode.TreeDataProvider<BtmTreeNode> {
         `${element.taskName} ${element.subcommandName}`,
         vscode.TreeItemCollapsibleState.None
       );
-      item.contextValue = element.isGlobal ? 'btm-global-subcommand' : 'btm-subcommand';
+      item.contextValue = element.isGlobal ? 'btm-global-subcommand' : element.isModule ? 'btm-module-subcommand' : 'btm-subcommand';
       item.iconPath = new vscode.ThemeIcon('play');
       item.command = element.isGlobal
         ? { command: 'btm.runGlobalSubcommandFromTreeClick', arguments: [element], title: 'Run' }
-        : { command: 'btm.runSubcommandFromTreeClick', arguments: [element], title: 'Run' };
+        : element.isModule
+          ? { command: 'btm.runModuleSubcommandFromTreeClick', arguments: [element], title: 'Run' }
+          : { command: 'btm.runSubcommandFromTreeClick', arguments: [element], title: 'Run' };
       item.tooltip = buildSubcommandTooltip(element.subcommand);
       return item;
     }
@@ -458,6 +583,14 @@ async function runBtmTaskNoSubcommand(
   if (requiredArgs === undefined) return;
   const optionalArgs = await promptOptionalArgs(optional);
   const flatArgs = [...requiredArgs, ...optionalArgs];
+
+  if (useDedicatedTerminal()) {
+    runInDedicatedTerminal(taskName, cwd, folder.uri.fsPath, {
+      args: flatArgs.length > 0 ? flatArgs : undefined,
+    });
+    return;
+  }
+
   const task = new vscode.Task(
     { type: BTM_TASK_TYPE, task: taskName },
     folder,
@@ -482,6 +615,15 @@ async function runBtmTaskNoSubcommandGlobal(
   if (requiredArgs === undefined) return;
   const optionalArgs = await promptOptionalArgs(optional);
   const flatArgs = [...requiredArgs, ...optionalArgs];
+
+  if (useDedicatedTerminal()) {
+    const workspaceHome = getWorkspaceHome();
+    runInDedicatedTerminal(taskName, cwd, workspaceHome, {
+      args: flatArgs.length > 0 ? flatArgs : undefined,
+    });
+    return;
+  }
+
   const task = new vscode.Task(
     { type: BTM_TASK_TYPE, task: taskName },
     vscode.TaskScope.Global,
@@ -522,6 +664,14 @@ async function runBtmTask(
   if (requiredArgs === undefined) return;
   const optionalArgs = await promptOptionalArgs(optional);
   const flatArgs = [...requiredArgs, ...optionalArgs];
+
+  if (useDedicatedTerminal()) {
+    runInDedicatedTerminal(taskName, cwd, folder.uri.fsPath, {
+      subcommand: opts?.subcommand,
+      args: flatArgs.length > 0 ? flatArgs : undefined,
+    });
+    return;
+  }
 
   const task = new vscode.Task(
     { type: BTM_TASK_TYPE, task: taskName },
@@ -564,6 +714,15 @@ async function runBtmTaskGlobal(
   const optionalArgs = await promptOptionalArgs(optional);
   const flatArgs = [...requiredArgs, ...optionalArgs];
 
+  if (useDedicatedTerminal()) {
+    const workspaceHome = getWorkspaceHome();
+    runInDedicatedTerminal(taskName, cwd, workspaceHome, {
+      subcommand: opts?.subcommand,
+      args: flatArgs.length > 0 ? flatArgs : undefined,
+    });
+    return;
+  }
+
   const task = new vscode.Task(
     { type: BTM_TASK_TYPE, task: taskName },
     vscode.TaskScope.Global,
@@ -586,7 +745,17 @@ async function runBtmSubcommandFromTree(
   if (requiredArgs === undefined) return;
   const optionalArgs = opts?.withOptionalArgs ? await promptOptionalArgs(optional) : [];
   const flatArgs = [...requiredArgs, ...optionalArgs];
-  const scope = node.isGlobal ? vscode.TaskScope.Global : node.folder;
+
+  if (useDedicatedTerminal()) {
+    const workspaceHome = (node.isGlobal || node.isModule) ? getWorkspaceHome() : node.folder.uri.fsPath;
+    runInDedicatedTerminal(node.taskName, node.btmCwd, workspaceHome, {
+      subcommand: node.subcommandName,
+      args: flatArgs.length > 0 ? flatArgs : undefined,
+    });
+    return;
+  }
+
+  const scope = (node.isGlobal || node.isModule) ? vscode.TaskScope.Global : node.folder;
   const task = new vscode.Task(
     { type: BTM_TASK_TYPE, task: node.taskName },
     scope,
@@ -640,6 +809,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.createTreeView('btm.tasks', {
       treeDataProvider: treeProvider,
       showCollapseAll: true,
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((t) => {
+      if (t.name === BTM_TERMINAL_NAME) _btmTerminalSourced = false;
     })
   );
 
@@ -729,6 +904,47 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('btm.runGlobalSubcommandFromTreeWithArgsClick', (node: BtmSubcommandNode) => {
       if (node?.kind === 'subcommand' && node?.isGlobal && shouldRunOnClick(node)) void runBtmSubcommandFromTree(node, { withOptionalArgs: true });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleTaskFromTree', (node: BtmTaskNode) => {
+      if (node?.kind === 'task' && node?.isModule) void runBtmTaskNoSubcommandGlobal(node.taskName, node.btmCwd, { withOptionalArgs: false });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleTaskFromTreeClick', (node: BtmTaskNode) => {
+      if (node?.kind === 'task' && node?.isModule && shouldRunOnClick(node)) void runBtmTaskNoSubcommandGlobal(node.taskName, node.btmCwd, { withOptionalArgs: false });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleTaskFromTreeWithArgs', (node: BtmTaskNode) => {
+      if (node?.kind === 'task' && node?.isModule) void runBtmTaskNoSubcommandGlobal(node.taskName, node.btmCwd, { withOptionalArgs: true });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleTaskFromTreeWithArgsClick', (node: BtmTaskNode) => {
+      if (node?.kind === 'task' && node?.isModule && shouldRunOnClick(node)) void runBtmTaskNoSubcommandGlobal(node.taskName, node.btmCwd, { withOptionalArgs: true });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleSubcommandFromTree', (node: BtmSubcommandNode) => {
+      if (node?.kind === 'subcommand' && node?.isModule) void runBtmSubcommandFromTree(node, { withOptionalArgs: false });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleSubcommandFromTreeClick', (node: BtmSubcommandNode) => {
+      if (node?.kind === 'subcommand' && node?.isModule && shouldRunOnClick(node)) void runBtmSubcommandFromTree(node, { withOptionalArgs: false });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleSubcommandFromTreeWithArgs', (node: BtmSubcommandNode) => {
+      if (node?.kind === 'subcommand' && node?.isModule) void runBtmSubcommandFromTree(node, { withOptionalArgs: true });
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('btm.runModuleSubcommandFromTreeWithArgsClick', (node: BtmSubcommandNode) => {
+      if (node?.kind === 'subcommand' && node?.isModule && shouldRunOnClick(node)) void runBtmSubcommandFromTree(node, { withOptionalArgs: true });
     })
   );
 
